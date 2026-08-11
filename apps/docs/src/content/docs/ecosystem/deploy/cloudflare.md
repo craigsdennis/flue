@@ -155,7 +155,13 @@ Adding or removing an agent file regenerates the Worker entry and wrangler confi
 
 Route middleware (plain Hono middleware applied at the agent's mount path in `app.ts`, before the `createAgentRouter(...)` mount) sees the original inbound HTTP request before Flue forwards accepted work into its Durable Object. Durable agent processing is a later boundary: after admission, Flue uses a deterministic internal request and does not persist or reconstruct the caller's original headers, cookies, query parameters, URL, or body. Authenticate before admission and carry any non-secret correlation you need later in application-owned input or storage.
 
-`flue run` does not emulate Cloudflare: it is Node-local, and agent modules that import `cloudflare:*` fail under it with a pointer at `vite dev`.
+For a one-shot CLI run inside the same workerd environment, add `--vite`:
+
+```bash
+npx flue run src/agents/translator.ts --vite --message "Translate to French: Hello world"
+```
+
+Cloudflare's built-in Vite run environment provides the generated Durable Object, Workers bindings, and persistent local state without requiring an authored HTTP mount. The CLI uses a random localhost-only route and removes it when the temporary server closes. Without `--vite`, `flue run` remains transport-free and Node-local; agent modules that import `cloudflare:*` fail in that mode.
 
 ### 7. Build and deploy
 

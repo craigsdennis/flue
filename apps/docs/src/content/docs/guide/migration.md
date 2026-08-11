@@ -314,7 +314,7 @@ Messages remain Flue-owned parts-based values; new part kinds (`data-*` from `us
 
 ## CLI
 
-`flue init`, `flue add`, `flue update`, and `flue docs` remain (`flue init` is now a full interactive project scaffold rather than a config-file writer). `flue dev` and `flue build` are removed (Vite owns both). `flue run` no longer talks to a built server; it executes one agent module in-process:
+`flue init`, `flue add`, `flue update`, and `flue docs` remain (`flue init` is now a full interactive project scaffold rather than a config-file writer). `flue dev` and `flue build` are removed (Vite owns both). By default, `flue run` no longer talks to a server; it executes one agent module in-process:
 
 ```bash
 # Beta
@@ -327,7 +327,8 @@ flue run src/agents/support.ts --message "Handle ticket 42." --id ticket-42
 - `--input` → `--data '<json>'` (creation data, validated by the `initialData` static).
 - Gone with the HTTP form: `--server`, `--header`, `--target`, `--root`, `--output`, `--config`, and workflow names. To call a deployed server, use the SDK's conversation client instead.
 - New: `--uid`/`--new` send conditions and `--json` (result envelope). Stdout is the reply only; logs go to stderr.
-- `flue run` never loads `app.ts` — register providers in the agent module if you rely on `setProvider()` at app startup.
+- New: `--vite` starts the project's registered Vite host environment and drives the selected agent through the normal conversation protocol. Cloudflare uses this mode for workerd, Workers bindings, and Durable Object persistence.
+- Transport-free `flue run` never loads `app.ts`; `flue run --vite` does. Register providers in the agent module when both modes must work.
 
 ## Migration checklist
 

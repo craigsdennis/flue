@@ -30,7 +30,7 @@ import { sqlite } from '@flue/runtime/node';
 export default sqlite('./data/flue.db');
 ```
 
-Like `app.ts`, the `db.ts` entry is discovered by convention — `vite dev`, `vite build`, and `flue run` all resolve it from the source root (`.flue/`, `src/`, or the project root) and connect it at startup. To place it somewhere else, set the `db` path in your config file; see [Configuration](/docs/reference/configuration/#db).
+Like `app.ts`, the `db.ts` entry is discovered by convention — `vite dev`, `vite build`, and transport-free `flue run` all resolve it from the source root (`.flue/`, `src/`, or the project root) and connect it at startup. A `flue run --vite` invocation uses its host's normal persistence instead (and Cloudflare rejects `db.ts` because Durable Object SQLite is built in). To place a Node database entry somewhere else, set the `db` path in your config file; see [Configuration](/docs/reference/configuration/#db).
 
 Because the module is ordinary TypeScript, the adapter can read connection strings from the environment, construct a driver pool, and export whatever the situation calls for. Flue calls the adapter's `migrate()` once at boot to create or verify its tables, then awaits `connect()` — so an unreachable or misconfigured database fails at startup, not in the middle of your first conversation.
 
@@ -45,7 +45,7 @@ The development commands soften this default:
 | Command      | Without `db.ts`                                                                                                           |
 | ------------ | ------------------------------------------------------------------------------------------------------------------------- |
 | `vite dev`   | A cache file (`node_modules/.cache/flue/dev.db`) — history survives code reloads, resets when the dev server cold-starts. |
-| `flue run`   | A cache file (`node_modules/.cache/flue/run.db`) — never reset, so `--id` continues conversations across invocations.     |
+| `flue run`   | Transport-free: `node_modules/.cache/flue/run.db`, never reset. With `--vite`: the host's local persistence.              |
 | `vite build` | In-memory — the deployed server keeps state only for the process lifetime.                                                |
 
 With a `db.ts`, all three use your adapter, so development runs against the same storage shape as production.

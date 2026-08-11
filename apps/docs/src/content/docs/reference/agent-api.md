@@ -65,7 +65,7 @@ The agent's **durable identity** is the slug that keys its conversation storage 
 
 1. The build-stamped binding — the `'use agent'` transform captures the identity as a string literal at build time, so minification cannot corrupt it.
 2. The [`agentName` static](#agent-statics).
-3. The function's own `name` — safe in plugin-less contexts (`flue run`, unit tests, `start()` scripts) where no minifier runs.
+3. The function's own `name` — safe in plugin-less contexts (transport-free `flue run`, unit tests, `start()` scripts) where no minifier runs.
 
 - Identities must match `/^[A-Za-z][A-Za-z0-9]*(?:-[A-Za-z0-9]+)*$/` (exported as `AGENT_IDENTITY_PATTERN`): a PascalCase function name or a kebab-case override. In particular, no `:` and no leading digit. Invalid identities throw at registration.
 - Duplicate identities across the registered set throw. Registering the same function value under two identities throws.
@@ -324,7 +324,7 @@ The Node bootstrap for running Flue outside a generated server entry — standal
 - `agents` — the agents this runtime serves. Required, non-empty. Each entry is an agent function, or `{ agent, name }` when an identity override is needed (inline or anonymous functions in tests). Identity resolves from the entry's `name`, else the agent's own identity (`agentName` static, else function name) — never positionally, so reordering the array cannot reassign conversations. An anonymous function with no `agentName` and no `name` throws.
 - `db` — persistence. Defaults to in-memory SQLite (process lifetime — nothing survives exit). Pass an adapter, such as [`sqlite('./run.db')`](/docs/guide/node-target/#sqlite) from `@flue/runtime/node`, to persist conversations across runs. See [Data Persistence API](/docs/reference/data-persistence-api/) for the adapter contract.
 - `env` — the runtime environment (provider credentials and other bindings). Defaults to `process.env`.
-- `providers` — the [Pi providers](/docs/reference/provider-api/) this runtime registers, replacing the default set. Omitted registers every Pi built-in, the same as `flue run`; an empty array registers none. Pass built-in factories, `createProvider(...)` customs, or a faux provider's `.provider` in tests:
+- `providers` — the [Pi providers](/docs/reference/provider-api/) this runtime registers, replacing the default set. Omitted registers every Pi built-in, the same as transport-free `flue run`; an empty array registers none. Pass built-in factories, `createProvider(...)` customs, or a faux provider's `.provider` in tests:
 
   ```ts
   import { anthropicProvider } from '@earendil-works/pi-ai/providers/anthropic';

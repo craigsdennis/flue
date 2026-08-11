@@ -74,6 +74,8 @@ You can now spin up new agents from your terminal, running on your local machine
 npx flue run src/agents/assistant.ts --message "Say hello in five words or fewer."
 ```
 
+This default is transport-free and Node-local, even when the project targets Cloudflare. When the agent needs its Vite host environment — for example Cloudflare Workers bindings or keyless Workers AI — add `--vite`. See [`flue run`](/docs/cli/run/) for the two execution modes.
+
 Agents are addressable, so you can message with a specific agent by passing an agent ID (`--id`). Agent conversations are persistent — the second message remembers the first. See [`flue run`](/docs/cli/run/) for the full set of flags.
 
 ```bash

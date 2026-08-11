@@ -7,17 +7,18 @@ lastReviewedAt: 2026-07-21
 ## Synopsis
 
 ```bash
-flue run <path> --message <text> [--name <agent>] [--id <id>] [--data <json>] [--uid <uid> | --new] [--env <path>] [--json]
+flue run <path> --message <text> [--name <agent>] [--id <id>] [--data <json>] [--uid <uid> | --new] [--vite] [--env <path>] [--json]
 ```
 
 ## Description
 
-`flue run` executes one agent module locally: it submits one message, streams the agent's activity to stderr, prints the final assistant reply to stdout, and exits. Its execution environment follows the explicit `target` in `flue.config.*`:
+`flue run` executes one agent module locally: it submits one message, streams the agent's activity to stderr, prints the final assistant reply to stdout, and exits. It is transport-free by default on every target: no server is created and only the agent module (and whatever it imports) is loaded, never `app.ts`. A module that imports platform APIs such as `cloudflare:*` fails in this mode.
 
-- **Node (or no explicit target):** the run is transport-free. No server is created and only the agent module (and whatever it imports) is loaded, never `app.ts`. A module that imports `cloudflare:*` APIs fails with a pointer at `vite dev`.
-- **Cloudflare:** the CLI starts the project's Vite configuration on an OS-assigned localhost port and runs the selected registered agent through workerd and Flue's normal conversation protocol. The generated Durable Object and project bindings are available, including the `cloudflare/...` Workers AI provider. The temporary route is random and bypasses authored HTTP mounts and middleware; the server shuts down after the run. The agent module must have a top-level `'use agent'` directive and match the configured agent scan.
+Pass `--vite` to run through the single [`FlueRunEnvironment`](/docs/reference/configuration/#fluerunenvironment) registered by the project's Vite configuration. The host owns platform setup, route injection, persistence, and cleanup; the CLI owns agent selection, server startup, protocol driving, and terminal output. Cloudflare provides an environment out of the box, so `--vite` runs the selected agent through workerd with the generated Durable Object and project bindings, including the `cloudflare/...` Workers AI provider.
 
-Conversations persist between invocations, so `--id` continues a conversation an earlier run started. Node storage comes from the project's [db entry](/docs/guide/database/) when one exists, or a project-local cache file (`node_modules/.cache/flue/run.db`) without one. Cloudflare uses the Vite plugin's persistent local binding state (by default `.wrangler/state`), including Durable Object SQLite. `flue.config.*` is discovered from the current working directory, and the project `.env` is loaded automatically (values already set in the shell win); Cloudflare's standard local binding-variable loading remains owned by the Cloudflare Vite plugin.
+Every Vite-hosted run uses a random temporary route and shuts the server down afterward. The agent module must have a top-level `'use agent'` directive and match the configured agent scan. Host integrations may deliberately bypass authored HTTP mounts and middleware, as Cloudflare does for its localhost-only route; each integration documents its own behavior.
+
+Conversations persist between invocations, so `--id` continues a conversation an earlier run started. Node storage comes from the project's [db entry](/docs/guide/database/) when one exists, or a project-local cache file (`node_modules/.cache/flue/run.db`) without one. Vite hosts own their persistence; Cloudflare uses the Vite plugin's persistent local binding state (by default `.wrangler/state`), including Durable Object SQLite. `flue.config.*` is discovered from the current working directory, and the project `.env` is loaded automatically (values already set in the shell win); Cloudflare's standard local binding-variable loading remains owned by the Cloudflare Vite plugin.
 
 ## Options
 
@@ -31,6 +32,7 @@ Conversations persist between invocations, so `--id` continues a conversation an
 | `--uid <uid>`          | Continue only the conversation instance with this uid. Cannot be combined with `--new` or `--data`.                                                                                                                                     |
 | `--new`                | Create only: the run is rejected when the conversation id already exists.                                                                                                                                                               |
 | `--json`               | Print a JSON result envelope to stdout instead of the reply text.                                                                                                                                                                       |
+| `--vite`               | Run through the single [`FlueRunEnvironment`](/docs/reference/configuration/#fluerunenvironment) registered by the project's Vite configuration.                                                                                        |
 | `--env <path>`         | Load one alternate `.env`-format file before the run instead of the default `.env`.                                                                                                                                                     |
 
 ## Output
@@ -74,6 +76,9 @@ flue run src/agents/triage.ts -m "Triage this." --id "issue-$N" --data '{"issue"
 
 # Extract just the reply text from the envelope
 flue run src/agents/hello.ts -m "Run the demo." --json | jq -r .message
+
+# Run through a third-party Vite host integration
+flue run src/agents/hello.ts -m "Hi" --vite
 
 # Load staging credentials for one run
 flue run src/agents/hello.ts -m "Hi" --env .env.staging

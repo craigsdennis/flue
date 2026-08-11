@@ -77,6 +77,7 @@ import { createNodeDevController } from './node-dev.ts';
 import { configureNodePreview } from './node-preview.ts';
 import { canonicalizePath, isWithinDirectory } from './paths.ts';
 import { generateProvidersModule } from './providers-module.ts';
+import type { FlueRunEnvironment, FlueRunEnvironmentOptions } from './run-environment.ts';
 import { transformUseAgentModule } from './use-agent-transform.ts';
 import { createWatchQueue, type WatchQueue } from './watch-queue.ts';
 
@@ -104,11 +105,13 @@ export interface FlueResolvedProjectInfo {
  */
 export interface FlueVitePluginApi {
 	readonly resolved: FlueResolvedProjectInfo | undefined;
+	/** Register one host-owned Vite environment for `flue run --vite`. */
+	registerRunEnvironment(environment: FlueRunEnvironment): void;
 }
 
-/** Internal mutation surface used only by the `flue run` bridge plugin. */
+/** Internal CLI bridge surface; not exported from the public package entry. */
 export interface FlueVitePluginInternalApi extends FlueVitePluginApi {
-	configureCloudflareRun(options: { identity: string; routePrefix: string }): void;
+	configureRunEnvironment(options: FlueRunEnvironmentOptions): Promise<{ name: string }>;
 }
 
 const VIRTUAL_APP = 'virtual:flue/app';
@@ -192,7 +195,9 @@ interface FluePluginState {
 	resolved: FlueResolvedProjectInfo | undefined;
 	/** Warnings collected during the `config` hook, logged in `configResolved`. */
 	pendingWarnings: string[];
-	/** Ephemeral localhost-only route installed by `flue run` on Cloudflare. */
+	/** Vite hosts available to the CLI for this config resolution. */
+	runEnvironments: Map<string, FlueRunEnvironment>;
+	/** Ephemeral localhost-only route installed by Cloudflare's run environment. */
 	cloudflareRun: { identity: string; routePrefix: string } | undefined;
 }
 
@@ -214,6 +219,7 @@ export function flue(config: FlueConfig = {}): Plugin[] {
 		watchQueue: createWatchQueue(),
 		resolved: undefined,
 		pendingWarnings: [],
+		runEnvironments: new Map(),
 		cloudflareRun: undefined,
 	};
 	const resolverState: DependencyResolverState = {
@@ -263,16 +269,39 @@ export function flue(config: FlueConfig = {}): Plugin[] {
 		get resolved() {
 			return state.resolved;
 		},
-		configureCloudflareRun(options) {
-			if (state.target !== 'cloudflare') {
-				throw new Error('[flue] The Cloudflare run bridge was attached to a Node target.');
+		registerRunEnvironment(environment) {
+			if (typeof environment.name !== 'string' || environment.name.trim() === '') {
+				throw new Error('[flue] A Vite run environment requires a non-empty name.');
 			}
-			if (!state.agents.some((agent) => agent.identity === options.identity)) {
+			if (typeof environment.configure !== 'function') {
 				throw new Error(
-					`[flue] The Cloudflare run bridge selected an unregistered agent (${JSON.stringify(options.identity)}).`,
+					`[flue] Vite run environment ${JSON.stringify(environment.name)} requires a configure() function.`,
 				);
 			}
-			state.cloudflareRun = options;
+			const existing = state.runEnvironments.get(environment.name);
+			if (existing && existing !== environment) {
+				throw new Error(
+					`[flue] Vite run environment ${JSON.stringify(environment.name)} was registered more than once.`,
+				);
+			}
+			state.runEnvironments.set(environment.name, environment);
+		},
+		async configureRunEnvironment(options) {
+			const environments = [...state.runEnvironments.values()];
+			if (environments.length === 0) {
+				throw new Error(
+					'[flue] This Vite config does not provide a flue run environment. ' +
+						'Framework integrations can register one with flueRunEnvironment() from @flue/vite.',
+				);
+			}
+			if (environments.length > 1) {
+				throw new Error(
+					`[flue] This Vite config provides multiple flue run environments (${environments.map((environment) => environment.name).join(', ')}). Configure exactly one.`,
+				);
+			}
+			const environment = environments[0] as FlueRunEnvironment;
+			await environment.configure(options);
+			return { name: environment.name };
 		},
 	};
 
@@ -325,6 +354,8 @@ export function flue(config: FlueConfig = {}): Plugin[] {
 			state.isPreview = env.isPreview === true;
 			state.cloudflarePrepared = false;
 			state.pendingWarnings = [];
+			state.runEnvironments.clear();
+			state.cloudflareRun = undefined;
 			workerConfigSource.configReady = false;
 			workerConfigSource.isPreview = state.isPreview;
 			workerConfigSource.customizerInvoked = false;
@@ -481,6 +512,12 @@ export function flue(config: FlueConfig = {}): Plugin[] {
 				},
 			};
 			if (target === 'cloudflare') {
+				api.registerRunEnvironment({
+					name: 'cloudflare',
+					configure({ agent, routePrefix }) {
+						state.cloudflareRun = { identity: agent.identity, routePrefix };
+					},
+				});
 				if (!cloudflareDetected) {
 					throw stackless(
 						new Error(

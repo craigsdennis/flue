@@ -3,11 +3,11 @@
  *
  * Node runs remain transport-free: the CLI spins up a NON-LISTENING Vite
  * module server and hands execution to run-bootstrap.ts inside the user's
- * single-runtime graph. An explicitly configured Cloudflare target instead
- * starts the user's Vite environment on an OS-assigned localhost port, adds
- * an ephemeral private route for the selected agent, and drives the normal
- * conversation protocol through workerd. That preserves bindings, Durable
- * Object behavior, and the Cloudflare plugin's persistent local state.
+ * single-runtime graph. A Vite-hosted run instead starts the user's Vite
+ * environment on an OS-assigned localhost port, adds an ephemeral private
+ * route for the selected agent, and drives the normal conversation protocol.
+ * Every Vite host opts in with --vite through the public
+ * flueRunEnvironment() integration point.
  */
 
 import { randomUUID } from 'node:crypto';
@@ -24,12 +24,12 @@ import {
 } from '@flue/runtime/config';
 import { createFlueClient, FlueExecutionError } from '@flue/sdk';
 import {
-	cloudflareRunBridgePlugin,
 	createImportTrace,
 	findCloudflareSpecifier,
 	flueDependencyResolverPlugin,
 	type ImportTrace,
 	markdownImportPlugin,
+	runBridgePlugin,
 	scanAgentModuleCode,
 } from '@flue/vite/internal';
 import { ulid } from 'ulidx';
@@ -44,8 +44,8 @@ interface LocalAgentRunReadyInfo {
 	/** The db entry module path when one resolved, else the default cache db file. */
 	dbEntry: string | undefined;
 	dbPath: string | undefined;
-	/** Present only when the run executes in workerd. */
-	target?: 'cloudflare';
+	/** Present only when a Vite host owns the run. */
+	environment?: string;
 }
 
 export interface LocalAgentRunOptions {
@@ -63,6 +63,8 @@ export interface LocalAgentRunOptions {
 	uid?: string | null;
 	/** Caller-chosen conversation id; a fresh ulid is minted when absent. */
 	conversationId?: string;
+	/** Force the project-registered Vite run environment (--vite). */
+	vite?: boolean;
 	cwd?: string;
 	onEvent?: (chunk: unknown) => void;
 	/** Captured runtime/module console output (routed to stderr by the caller). */
@@ -155,10 +157,10 @@ export function createLocalAgentRun(options: LocalAgentRunOptions): LocalAgentRu
 		const conversationId = options.conversationId ?? ulid();
 
 		const { configPath, project } = await resolveRunProject(cwd);
-		if (project.target === 'cloudflare') {
+		if (options.vite === true) {
 			const restoreConsole = redirectStdoutConsole(options.onRuntimeOutput);
 			try {
-				return await startCloudflareRun({
+				return await startViteRun({
 					project,
 					configPath,
 					agentPath,
@@ -236,30 +238,34 @@ export function createLocalAgentRun(options: LocalAgentRunOptions): LocalAgentRu
 		}
 	}
 
-	async function startCloudflareRun(args: {
+	async function startViteRun(args: {
 		project: ReturnType<typeof resolveFlueProject>;
 		configPath: string | undefined;
 		agentPath: string;
 		conversationId: string;
 		controller: AbortController;
-		setServer(server: CloudflareViteDevServerLike): void;
+		setServer(server: ListeningViteDevServerLike): void;
 	}): Promise<LocalAgentRunResult> {
 		throwIfAborted(args.controller.signal);
 		const routePrefix = `/__flue/run/${randomUUID()}`;
 		let identity: string | undefined;
-		const server = await createCloudflareRunServer({
+		let environment: string | undefined;
+		const server = await createViteRunServer({
 			root: args.project.root,
 			agentModulePath: args.agentPath,
 			agentName: options.agentName,
 			routePrefix,
-			onIdentity: (selected) => {
-				identity = selected;
+			onReady: (selected) => {
+				identity = selected.identity;
+				environment = selected.environment;
 			},
 		});
 		args.setServer(server);
 		await server.listen();
 		throwIfAborted(args.controller.signal);
-		if (!identity) throw new Error('[flue] Internal error: no Cloudflare run agent was selected.');
+		if (!identity || !environment) {
+			throw new Error('[flue] Internal error: the Vite run environment was not configured.');
+		}
 
 		const address = server.httpServer?.address();
 		if (!address || typeof address === 'string') {
@@ -276,7 +282,7 @@ export function createLocalAgentRun(options: LocalAgentRunOptions): LocalAgentRu
 			configPath: args.configPath,
 			dbEntry: undefined,
 			dbPath: undefined,
-			target: 'cloudflare',
+			environment,
 		});
 
 		const admission = await client.send({
@@ -402,20 +408,20 @@ interface ViteDevServerLike {
 	close(): Promise<void>;
 }
 
-interface CloudflareViteDevServerLike extends ViteDevServerLike {
+interface ListeningViteDevServerLike extends ViteDevServerLike {
 	listen(): Promise<unknown>;
 	httpServer: {
 		address(): string | { port: number } | null;
 	} | null;
 }
 
-async function createCloudflareRunServer(options: {
+async function createViteRunServer(options: {
 	root: string;
 	agentModulePath: string;
 	agentName: string | undefined;
 	routePrefix: string;
-	onIdentity(identity: string): void;
-}): Promise<CloudflareViteDevServerLike> {
+	onReady(info: { identity: string; environment: string }): void;
+}): Promise<ListeningViteDevServerLike> {
 	const { createServer } = await import('vite');
 	return (await createServer({
 		root: options.root,
@@ -430,14 +436,14 @@ async function createCloudflareRunServer(options: {
 			open: false,
 		},
 		plugins: [
-			cloudflareRunBridgePlugin({
+			runBridgePlugin({
 				agentModulePath: options.agentModulePath,
 				...(options.agentName !== undefined ? { agentName: options.agentName } : {}),
 				routePrefix: options.routePrefix,
-				onReady: ({ identity }) => options.onIdentity(identity),
+				onReady: ({ identity, environment }) => options.onReady({ identity, environment }),
 			}),
 		],
-	})) as CloudflareViteDevServerLike;
+	})) as ListeningViteDevServerLike;
 }
 
 /**

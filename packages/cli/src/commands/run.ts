@@ -38,6 +38,7 @@ export function registerRunCommand(cli: CAC): void {
 		.option('--uid <uid>', 'Continue only the conversation incarnation with this uid')
 		.option('--new', 'Create only: reject when the conversation id already exists')
 		.option('--json', 'Print a JSON result envelope to stdout instead of the message text')
+		.option('--vite', 'Run through the Vite host environment registered by the project')
 		.option('--env <path>', 'Load one alternate .env-format file before the run')
 		.example('  $ flue run src/agents/hello.ts -m "Hi there"')
 		.example('  $ flue run src/agents/hello.ts -m "And then?" --id support-4821 --env .env.staging')
@@ -54,6 +55,7 @@ interface RunArgs {
 	/** Send condition: a string (--uid, continue-only) or null (--new, create-only). */
 	uid: string | null | undefined;
 	json: boolean;
+	vite: boolean;
 	envFile: string | undefined;
 }
 
@@ -90,6 +92,7 @@ function validateRunOptions(modulePath: string, options: CliOptions): RunArgs {
 		// The send condition: --uid <value> = continue-only, --new = create-only.
 		uid: createOnly ? null : uid,
 		json: booleanOption(options, 'json'),
+		vite: booleanOption(options, 'vite'),
 		envFile,
 	};
 }
@@ -127,6 +130,7 @@ async function runAction(modulePath: string, options: CliOptions): Promise<void>
 		initialData: args.initialData,
 		uid: args.uid,
 		conversationId: args.id,
+		vite: args.vite,
 		onEvent: (chunk) => presenter.present(chunk as ConversationStreamChunk),
 		onRuntimeOutput: (line) => {
 			if (line.trim()) stderrLine(pc.dim(line));
@@ -135,7 +139,7 @@ async function runAction(modulePath: string, options: CliOptions): Promise<void>
 			brandRows('flue run', [
 				['agent', info.identity],
 				['id', info.conversationId],
-				['target', info.target],
+				['environment', info.environment],
 				['config', info.configPath ? displayPath(info.root, info.configPath) : undefined],
 				['db', info.dbEntry ?? info.dbPath],
 				['env', fs.existsSync(envLoader.file) ? displayPath(info.root, envLoader.file) : undefined],

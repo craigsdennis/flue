@@ -223,6 +223,7 @@ The plugin serves six virtual modules; they are resolvable only inside module gr
 ```ts
 interface FlueVitePluginApi {
   readonly resolved: FlueResolvedProjectInfo | undefined;
+  registerRunEnvironment(environment: FlueRunEnvironment): void;
 }
 
 interface FlueResolvedProjectInfo {
@@ -234,13 +235,59 @@ interface FlueResolvedProjectInfo {
 }
 ```
 
-Exported from `@flue/vite`. The core `flue` plugin exposes `FlueVitePluginApi` on its `api` field as a read surface for other tools. `resolved` is `undefined` until Vite config resolution completes.
+Exported from `@flue/vite`. The core `flue` plugin exposes `FlueVitePluginApi` on its `api` field for sibling Vite integrations and tooling. `resolved` is `undefined` until Vite config resolution completes. Framework integrations normally register a run environment through the [`flueRunEnvironment()`](#fluerunenvironment) plugin factory rather than calling `registerRunEnvironment()` directly.
 
 - `config` — the merged Flue config (file + inline options).
 - `configPath` — absolute path of the discovered `flue.config.*`, if any.
 - `project` — the resolved filesystem layout; see [`ResolvedFlueProject`](#resolveflueproject).
 - `target` — the effective target after [detection](#target-detection).
 - `agents` — the scanned agent set; live in dev (reflects the latest re-scan).
+
+## `FlueRunEnvironment`
+
+```ts
+import { flueRunEnvironment } from '@flue/vite';
+
+interface FlueRunEnvironment {
+  readonly name: string;
+  configure(options: {
+    readonly agent: AgentScanResult;
+    readonly routePrefix: string;
+  }): void | Promise<void>;
+}
+
+function flueRunEnvironment(environment: FlueRunEnvironment): Plugin;
+```
+
+The host-side extension point for [`flue run --vite`](/docs/cli/run/). A Vite-based framework integration adds the returned plugin after `flue()` and closes over its own generated-entry state:
+
+```ts
+const framework = myFramework();
+
+export default defineConfig({
+  plugins: [
+    flue(),
+    framework.plugin,
+    flueRunEnvironment({
+      name: 'my-framework',
+      configure({ agent, routePrefix }) {
+        // Framework-owned entry generation mounts createAgentRouter(agent)
+        // at routePrefix inside the platform emulator it already starts.
+        framework.mountFlueRunRoute({ agent, routePrefix });
+      },
+    }),
+  ],
+});
+```
+
+The contract deliberately stops at the HTTP boundary:
+
+- Flue selects a registered agent using the command's module path and `--name`.
+- The CLI supplies an unpredictable route prefix, starts Vite on an OS-assigned localhost port, drives the normal conversation protocol, renders events, handles aborts, and closes the server.
+- The host's `configure()` callback makes that agent's `createAgentRouter()` surface reachable below the exact prefix before the server listens. It owns platform bindings, emulator behavior, persistence, and any generated-entry mechanics.
+- The host should not write build artifacts solely for the run. State intended to survive invocations belongs in the host's normal local persistence directory.
+
+Exactly one environment may be registered for a Vite-hosted run. Cloudflare registers its built-in environment as part of the target integration; every host, including Cloudflare, is selected explicitly with `flue run --vite`. Vite-hosted runs require the module to be part of Flue's canonical `'use agent'` scan, so build, dev, and run cannot disagree about agent identity.
 
 ## `flueWorkerConfig()`
 

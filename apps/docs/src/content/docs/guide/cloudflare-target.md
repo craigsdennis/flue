@@ -95,7 +95,7 @@ Renaming preserves the class's stored conversations under the new name. Re-mount
 
 The plugin registers agents but mounts no routes. Your [`app.ts`](/docs/guide/routing/) remains the route map.
 
-When `flue.config.ts` explicitly selects `target: 'cloudflare'`, [`flue run`](/docs/cli/run/) starts the same Vite/workerd environment on a temporary localhost port. It addresses the selected registered agent through an ephemeral random route, so the agent can use Workers bindings (including keyless Workers AI) without requiring an authored HTTP mount. Durable Object state uses the Cloudflare Vite plugin's persistent local state, so repeating `flue run ... --id <id>` continues the conversation across invocations. Authored mount middleware is intentionally not applied to this localhost-only CLI route.
+Run [`flue run ... --vite`](/docs/cli/run/) to start the same Vite/workerd environment on a temporary localhost port. Cloudflare supplies Flue's built-in [`FlueRunEnvironment`](/docs/reference/configuration/#fluerunenvironment): it addresses the selected registered agent through an ephemeral random route, so the agent can use Workers bindings (including keyless Workers AI) without requiring an authored HTTP mount. Durable Object state uses the Cloudflare Vite plugin's persistent local state, so repeating `flue run ... --vite --id <id>` continues the conversation across invocations. Without `--vite`, `flue run` keeps its transport-free Node-local behavior on every target. Authored mount middleware is intentionally not applied to this localhost-only CLI route.
 
 ## Durable agent execution
 

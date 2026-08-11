@@ -38,6 +38,8 @@ export interface GenerateCloudflareEntryOptions {
 	 * `undefined` means on.
 	 */
 	readonly tracing: boolean | undefined;
+	/** Ephemeral localhost bridge installed only by `flue run`. */
+	readonly cloudflareRun?: { readonly identity: string; readonly routePrefix: string };
 }
 
 /** Posix-normalize a path for embedding in generated import specifiers. */
@@ -46,7 +48,7 @@ function importPath(filePath: string): string {
 }
 
 export function generateCloudflareEntry(options: GenerateCloudflareEntryOptions): string {
-	const { appEntry, cloudflareEntry, agents, providers, tracing } = options;
+	const { appEntry, cloudflareEntry, agents, providers, tracing, cloudflareRun } = options;
 	const includeBindingProvider = providers === undefined || providers.includes('cloudflare');
 	const includeTracing = tracing !== false;
 
@@ -106,7 +108,7 @@ export function generateCloudflareEntry(options: GenerateCloudflareEntryOptions)
 // @ts-nocheck
 import { env } from 'cloudflare:workers';
 import { Agent, getAgentByName } from 'agents';
-import {
+${cloudflareRun ? "import { createAgentRouter } from '@flue/runtime/routing';\nimport { Hono } from 'hono';\n" : ''}import {
 	configureFlueRuntime,
 	createCloudflareAgentRuntime,
 	createFlueContext,
@@ -176,7 +178,36 @@ const agents = registrations.map((registration) => ({
 const agentIdentities = {
 ${agentIdentityEntries}
 };
+${
+	cloudflareRun
+		? `
+// ─── flue run bridge ────────────────────────────────────────────────────────
+// Present only in the ephemeral dev server started by the CLI. The random,
+// localhost-only route deliberately bypasses authored HTTP mounts and their
+// middleware so a module can be run by path, just like the Node target.
 
+const flueRunRegistration = registrations.find(
+	(registration) => registration.identity === ${JSON.stringify(cloudflareRun.identity)},
+);
+if (!flueRunRegistration) {
+	throw new Error('[flue] The agent selected by flue run is no longer registered.');
+}
+const flueRunRoutePrefix = ${JSON.stringify(cloudflareRun.routePrefix)};
+const flueRunRouter = new Hono().route(
+	flueRunRoutePrefix,
+	createAgentRouter(flueRunRegistration.agent),
+);
+
+function handleFlueRunRequest(request, env, ctx) {
+	const pathname = new URL(request.url).pathname;
+	if (pathname !== flueRunRoutePrefix && !pathname.startsWith(flueRunRoutePrefix + '/')) {
+		return undefined;
+	}
+	return flueRunRouter.fetch(request, env, ctx);
+}
+`
+		: ''
+}
 // ─── cloudflare.ts composition ──────────────────────────────────────────────
 
 const userCloudflare = ${userCloudflareValue};
@@ -269,7 +300,7 @@ if (!flueApp || typeof flueApp.fetch !== 'function') {
 export default {
 	...cloudflareHandlers,
 	fetch(request, env, ctx) {
-		return flueApp.fetch(request, env, ctx);
+		${cloudflareRun ? 'return handleFlueRunRequest(request, env, ctx) ?? flueApp.fetch(request, env, ctx);' : 'return flueApp.fetch(request, env, ctx);'}
 	},
 };
 `;

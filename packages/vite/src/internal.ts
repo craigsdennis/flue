@@ -8,6 +8,8 @@
  */
 export type { AgentExportScan, AgentModuleScan, ScanAgentModuleCodeOptions } from './agent-scan.ts';
 export { scanAgentModuleCode } from './agent-scan.ts';
+export type { CloudflareRunBridgeOptions } from './cloudflare-run-plugin.ts';
+export { cloudflareRunBridgePlugin } from './cloudflare-run-plugin.ts';
 export type { DependencyResolverState } from './dependency-resolver.ts';
 export { flueDependencyResolverPlugin } from './dependency-resolver.ts';
 export type { ImportTrace } from './import-trace.ts';

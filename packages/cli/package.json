@@ -29,6 +29,7 @@
 	},
 	"dependencies": {
 		"@flue/runtime": "workspace:*",
+		"@flue/sdk": "workspace:*",
 		"@flue/vite": "workspace:*",
 		"@vercel/detect-agent": "^1.2.3",
 		"cac": "^7.0.0",
@@ -39,7 +40,6 @@
 		"vite": "^8.1.2"
 	},
 	"devDependencies": {
-		"@flue/sdk": "workspace:*",
 		"@types/prompts": "^2.4.9",
 		"tsdown": "^0.22.7",
 		"tsx": "^4.19.2",

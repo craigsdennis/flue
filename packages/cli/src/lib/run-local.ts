@@ -1,16 +1,16 @@
 /**
- * `flue run <path>` — transport-free, one-shot local agent execution.
+ * `flue run <path>` — one-shot local agent execution.
  *
- * The CLI process owns orchestration only: resolve the module path and
- * project config, spin up a NON-LISTENING Vite server (middleware mode,
- * hmr off — no port is ever bound), and hand execution to the run
- * bootstrap. The bootstrap itself (run-bootstrap.ts) is loaded THROUGH that
- * Vite server, not imported here, so its `@flue/runtime` imports resolve
- * inside the same single-runtime module graph as the user's agent module
- * (see `flueDependencyResolverPlugin` — module-scoped runtime registries
- * make dual copies a real hazard).
+ * Node runs remain transport-free: the CLI spins up a NON-LISTENING Vite
+ * module server and hands execution to run-bootstrap.ts inside the user's
+ * single-runtime graph. An explicitly configured Cloudflare target instead
+ * starts the user's Vite environment on an OS-assigned localhost port, adds
+ * an ephemeral private route for the selected agent, and drives the normal
+ * conversation protocol through workerd. That preserves bindings, Durable
+ * Object behavior, and the Cloudflare plugin's persistent local state.
  */
 
+import { randomUUID } from 'node:crypto';
 import * as fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -22,7 +22,9 @@ import {
 	resolveFlueConfigPath,
 	resolveFlueProject,
 } from '@flue/runtime/config';
+import { createFlueClient, FlueExecutionError } from '@flue/sdk';
 import {
+	cloudflareRunBridgePlugin,
 	createImportTrace,
 	findCloudflareSpecifier,
 	flueDependencyResolverPlugin,
@@ -42,6 +44,8 @@ interface LocalAgentRunReadyInfo {
 	/** The db entry module path when one resolved, else the default cache db file. */
 	dbEntry: string | undefined;
 	dbPath: string | undefined;
+	/** Present only when the run executes in workerd. */
+	target?: 'cloudflare';
 }
 
 export interface LocalAgentRunOptions {
@@ -151,6 +155,24 @@ export function createLocalAgentRun(options: LocalAgentRunOptions): LocalAgentRu
 		const conversationId = options.conversationId ?? ulid();
 
 		const { configPath, project } = await resolveRunProject(cwd);
+		if (project.target === 'cloudflare') {
+			const restoreConsole = redirectStdoutConsole(options.onRuntimeOutput);
+			try {
+				return await startCloudflareRun({
+					project,
+					configPath,
+					agentPath,
+					conversationId,
+					controller,
+					setServer: (server) => {
+						viteServer = server;
+					},
+				});
+			} finally {
+				restoreConsole();
+			}
+		}
+
 		const defaultSqlitePath = path.join(project.root, RUN_DB_RELATIVE_PATH);
 		if (project.db === undefined) {
 			fs.mkdirSync(path.dirname(defaultSqlitePath), { recursive: true });
@@ -211,6 +233,99 @@ export function createLocalAgentRun(options: LocalAgentRunOptions): LocalAgentRu
 			return { ...outcome, identity: resolvedIdentity, conversationId };
 		} finally {
 			restoreConsole();
+		}
+	}
+
+	async function startCloudflareRun(args: {
+		project: ReturnType<typeof resolveFlueProject>;
+		configPath: string | undefined;
+		agentPath: string;
+		conversationId: string;
+		controller: AbortController;
+		setServer(server: CloudflareViteDevServerLike): void;
+	}): Promise<LocalAgentRunResult> {
+		throwIfAborted(args.controller.signal);
+		const routePrefix = `/__flue/run/${randomUUID()}`;
+		let identity: string | undefined;
+		const server = await createCloudflareRunServer({
+			root: args.project.root,
+			agentModulePath: args.agentPath,
+			agentName: options.agentName,
+			routePrefix,
+			onIdentity: (selected) => {
+				identity = selected;
+			},
+		});
+		args.setServer(server);
+		await server.listen();
+		throwIfAborted(args.controller.signal);
+		if (!identity) throw new Error('[flue] Internal error: no Cloudflare run agent was selected.');
+
+		const address = server.httpServer?.address();
+		if (!address || typeof address === 'string') {
+			throw new Error('[flue] Internal error: the Cloudflare development server did not listen.');
+		}
+		const client = createFlueClient({
+			url: `http://127.0.0.1:${address.port}${routePrefix}/${encodeURIComponent(args.conversationId)}`,
+		});
+
+		options.onReady?.({
+			identity,
+			conversationId: args.conversationId,
+			root: args.project.root,
+			configPath: args.configPath,
+			dbEntry: undefined,
+			dbPath: undefined,
+			target: 'cloudflare',
+		});
+
+		const admission = await client.send({
+			message: { kind: 'user', body: options.message },
+			...(options.initialData !== undefined ? { initialData: options.initialData } : {}),
+			...(options.uid !== undefined ? { uid: options.uid } : {}),
+		});
+
+		let abortRequested = false;
+		const requestAbort = () => {
+			if (abortRequested) return;
+			abortRequested = true;
+			void client.abort().catch((error) => {
+				console.error('[flue] Abort request failed:', error);
+			});
+		};
+		if (args.controller.signal.aborted) requestAbort();
+		args.controller.signal.addEventListener('abort', requestAbort, { once: true });
+
+		try {
+			const reply = await client.read(admission, {
+				onEvent: (chunk) => options.onEvent?.(chunk),
+			});
+			return {
+				identity,
+				conversationId: args.conversationId,
+				submissionId: admission.submissionId,
+				outcome: 'completed',
+				message: reply.text,
+				uid: admission.uid,
+			};
+		} catch (error) {
+			if (
+				error instanceof FlueExecutionError &&
+				(error.failure === 'failed' || error.failure === 'aborted')
+			) {
+				return {
+					identity,
+					conversationId: args.conversationId,
+					submissionId: admission.submissionId,
+					outcome: error.failure,
+					error: error.error,
+					message: '',
+					uid: admission.uid,
+				};
+			}
+			throw error;
+		} finally {
+			args.controller.signal.removeEventListener('abort', requestAbort);
 		}
 	}
 }
@@ -285,6 +400,44 @@ async function resolveRunProject(cwd: string): Promise<{
 interface ViteDevServerLike {
 	ssrLoadModule(url: string): Promise<Record<string, unknown>>;
 	close(): Promise<void>;
+}
+
+interface CloudflareViteDevServerLike extends ViteDevServerLike {
+	listen(): Promise<unknown>;
+	httpServer: {
+		address(): string | { port: number } | null;
+	} | null;
+}
+
+async function createCloudflareRunServer(options: {
+	root: string;
+	agentModulePath: string;
+	agentName: string | undefined;
+	routePrefix: string;
+	onIdentity(identity: string): void;
+}): Promise<CloudflareViteDevServerLike> {
+	const { createServer } = await import('vite');
+	return (await createServer({
+		root: options.root,
+		logLevel: 'silent',
+		clearScreen: false,
+		server: {
+			host: '127.0.0.1',
+			// An OS-assigned port makes concurrent runs safe and never collides
+			// with an already-running project dev server.
+			port: 0,
+			strictPort: true,
+			open: false,
+		},
+		plugins: [
+			cloudflareRunBridgePlugin({
+				agentModulePath: options.agentModulePath,
+				...(options.agentName !== undefined ? { agentName: options.agentName } : {}),
+				routePrefix: options.routePrefix,
+				onReady: ({ identity }) => options.onIdentity(identity),
+			}),
+		],
+	})) as CloudflareViteDevServerLike;
 }
 
 /**

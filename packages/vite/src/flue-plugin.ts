@@ -106,6 +106,11 @@ export interface FlueVitePluginApi {
 	readonly resolved: FlueResolvedProjectInfo | undefined;
 }
 
+/** Internal mutation surface used only by the `flue run` bridge plugin. */
+export interface FlueVitePluginInternalApi extends FlueVitePluginApi {
+	configureCloudflareRun(options: { identity: string; routePrefix: string }): void;
+}
+
 const VIRTUAL_APP = 'virtual:flue/app';
 const VIRTUAL_DB = 'virtual:flue/db';
 const VIRTUAL_AGENTS = 'virtual:flue/agents';
@@ -187,6 +192,8 @@ interface FluePluginState {
 	resolved: FlueResolvedProjectInfo | undefined;
 	/** Warnings collected during the `config` hook, logged in `configResolved`. */
 	pendingWarnings: string[];
+	/** Ephemeral localhost-only route installed by `flue run` on Cloudflare. */
+	cloudflareRun: { identity: string; routePrefix: string } | undefined;
 }
 
 export function flue(config: FlueConfig = {}): Plugin[] {
@@ -207,6 +214,7 @@ export function flue(config: FlueConfig = {}): Plugin[] {
 		watchQueue: createWatchQueue(),
 		resolved: undefined,
 		pendingWarnings: [],
+		cloudflareRun: undefined,
 	};
 	const resolverState: DependencyResolverState = {
 		root: undefined,
@@ -251,9 +259,20 @@ export function flue(config: FlueConfig = {}): Plugin[] {
 		state.agentsByPath = byPath;
 	};
 
-	const api: FlueVitePluginApi = {
+	const api: FlueVitePluginInternalApi = {
 		get resolved() {
 			return state.resolved;
+		},
+		configureCloudflareRun(options) {
+			if (state.target !== 'cloudflare') {
+				throw new Error('[flue] The Cloudflare run bridge was attached to a Node target.');
+			}
+			if (!state.agents.some((agent) => agent.identity === options.identity)) {
+				throw new Error(
+					`[flue] The Cloudflare run bridge selected an unregistered agent (${JSON.stringify(options.identity)}).`,
+				);
+			}
+			state.cloudflareRun = options;
 		},
 	};
 
@@ -554,6 +573,7 @@ export function flue(config: FlueConfig = {}): Plugin[] {
 					agents: state.agents,
 					providers: state.project.providers,
 					tracing: state.project.tracing,
+					cloudflareRun: state.cloudflareRun,
 				});
 			}
 			return undefined;

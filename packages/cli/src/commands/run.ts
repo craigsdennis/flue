@@ -19,9 +19,9 @@ import { createLocalAgentRun } from '../lib/run-local.ts';
 import { brandRows, error as cliError, row, success } from '../lib/terminal.ts';
 
 /**
- * `flue run <path>` — transport-free, one-shot local agent execution. The
- * heavy lifting lives in src/lib/run-local.ts; this module owns flag
- * validation and terminal presentation.
+ * `flue run <path>` — one-shot local agent execution. The heavy lifting
+ * lives in src/lib/run-local.ts; this module owns flag validation and
+ * terminal presentation.
  */
 
 export function registerRunCommand(cli: CAC): void {
@@ -135,6 +135,7 @@ async function runAction(modulePath: string, options: CliOptions): Promise<void>
 			brandRows('flue run', [
 				['agent', info.identity],
 				['id', info.conversationId],
+				['target', info.target],
 				['config', info.configPath ? displayPath(info.root, info.configPath) : undefined],
 				['db', info.dbEntry ?? info.dbPath],
 				['env', fs.existsSync(envLoader.file) ? displayPath(info.root, envLoader.file) : undefined],

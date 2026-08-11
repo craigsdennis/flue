@@ -86,7 +86,7 @@ The build and development target.
 - `'node'` — build a self-starting Node.js server. See [the Node.js target](/docs/guide/node-target/).
 - `'cloudflare'` — build a Workers-compatible application with one Durable Object class per agent. See [the Cloudflare target](/docs/guide/cloudflare-target/).
 - Default: unset. The `flue()` plugin then auto-detects the target from the Vite plugin array — see [Target detection](#target-detection). An explicit value overrides detection.
-- `flue run` is Node-local by default and ignores `target` for execution. With `--vite`, the Vite plugin resolves the target normally and the target's registered run environment owns execution.
+- `flue run` never branches on a platform name. A declared Vite run environment may request automatic selection (Cloudflare's does when its sibling plugin is present); otherwise execution is transport-free. `--vite` and `--node` override discovery.
 
 ### `app`
 
@@ -117,7 +117,7 @@ A glob narrowing the [`'use agent'` scan](/docs/guide/building-agents/#use-agent
 
 - Default: the entire source root, recursively (`**/*.{ts,mts,js,mjs}`).
 - Matches are always restricted to `.ts`/`.mts`/`.js`/`.mjs` files. `node_modules/`, `dist/`, `output/`, and `.wrangler/` directories are always excluded, and dot-directories are not matched.
-- By default, `flue run` ignores `agents`; it takes an explicit module path and performs no project scan. With `--vite`, that path must resolve to an agent in the canonical configured scan.
+- Transport-free `flue run` ignores `agents`; it takes an explicit module path and performs no project scan. A Vite-hosted run (automatic or forced with `--vite`) requires that path to resolve to an agent in the canonical configured scan.
 
 ### `providers`
 
@@ -127,7 +127,7 @@ The providers registered at server start, by provider ID (for example `['anthrop
 - The list is exhaustive: on the Cloudflare target, `cloudflare/...` models require `'cloudflare'` in the list. On the Node target, `'cloudflare'` is a config error — the Workers AI binding only exists on Workers.
 - Entries are validated as lowercase alphanumerics and dashes; an ID Pi doesn't ship fails the build with the unresolvable import path.
 - Custom providers registered with `setProvider()` in `app.ts` are unaffected, and a user registration always wins over a listed provider with the same ID.
-- By default, `flue run` ignores `providers` and registers the full built-in set. With `--vite`, the generated host entry honors the configured list normally.
+- Transport-free `flue run` ignores `providers` and registers the full built-in set. A Vite-hosted run uses the generated host entry and honors the configured list normally.
 
 The full semantics live in the [Provider API reference](/docs/reference/provider-api/#the-providers-config).
 
@@ -144,7 +144,7 @@ Agent tracing on the Cloudflare target (the built-in [`createCloudflareTracing()
 Both consumers resolve the configured fields against the filesystem with the same rules:
 
 - **Source root.** Authored modules are discovered from `<root>/.flue` when it exists as a directory, otherwise `<root>/src`, otherwise the project root itself. See [Project layout](/docs/guide/project-layout/).
-- **Default entry lookup.** An unset `app`/`db`/`cloudflare` field falls back to `<sourceRoot>/<field>.<ext>`, trying extensions in the order `ts`, `mts`, `js`, `mjs`. A missing default entry is not an error at resolution time; whether it is required is the consumer's call (`app` is required by `vite dev`, `vite build`, and `flue run --vite`; nothing is required by transport-free `flue run` or `vite preview`).
+- **Default entry lookup.** An unset `app`/`db`/`cloudflare` field falls back to `<sourceRoot>/<field>.<ext>`, trying extensions in the order `ts`, `mts`, `js`, `mjs`. A missing default entry is not an error at resolution time; whether it is required is the consumer's call (`app` is required by `vite dev`, `vite build`, and Vite-hosted `flue run`; nothing is required by transport-free `flue run` or `vite preview`).
 - **Explicit paths.** A set field resolves from the config file's directory (from the project root when the value came only from inline `flue()` options) and must exist; a missing explicit entry throws ``[flue] Configured `<field>` entry not found: <path>``.
 
 ## The `flue()` Vite plugin
@@ -250,6 +250,9 @@ import { flueRunEnvironment } from '@flue/vite';
 
 interface FlueRunEnvironment {
   readonly name: string;
+  readonly auto?:
+    | boolean
+    | ((context: { plugins: readonly Plugin[] }) => boolean | Promise<boolean>);
   configure(options: {
     readonly agent: AgentScanResult;
     readonly routePrefix: string;
@@ -259,7 +262,7 @@ interface FlueRunEnvironment {
 function flueRunEnvironment(environment: FlueRunEnvironment): Plugin;
 ```
 
-The host-side extension point for [`flue run --vite`](/docs/cli/run/). A Vite-based framework integration adds the returned plugin after `flue()` and closes over its own generated-entry state:
+The host-side extension point for Vite-hosted [`flue run`](/docs/cli/run/). A Vite-based framework integration adds the returned plugin after `flue()` and closes over its own generated-entry state:
 
 ```ts
 const framework = myFramework();
@@ -280,6 +283,8 @@ export default defineConfig({
 });
 ```
 
+`auto` defaults to `true`: declaring the integration makes an unflagged `flue run` select it automatically. Set `auto: false` when users should opt in with `--vite`. A predicate can inspect the flattened raw Vite plugin set; bundled integrations use this to claim automatic selection only when their owning sibling is present. Cloudflare's built-in predicate, for example, claims the run when `@cloudflare/vite-plugin` is in the config and `target` is not explicitly `'node'`. Detection evaluates the Vite config and plugin factories but runs no Vite hooks, loads no app, and starts no server.
+
 The contract deliberately stops at the HTTP boundary:
 
 - Flue selects a registered agent using the command's module path and `--name`.
@@ -287,7 +292,7 @@ The contract deliberately stops at the HTTP boundary:
 - The host's `configure()` callback makes that agent's `createAgentRouter()` surface reachable below the exact prefix before the server listens. It owns platform bindings, emulator behavior, persistence, and any generated-entry mechanics.
 - The host should not write build artifacts solely for the run. State intended to survive invocations belongs in the host's normal local persistence directory.
 
-Exactly one environment may be registered for a Vite-hosted run. Cloudflare registers its built-in environment as part of the target integration; every host, including Cloudflare, is selected explicitly with `flue run --vite`. Vite-hosted runs require the module to be part of Flue's canonical `'use agent'` scan, so build, dev, and run cannot disagree about agent identity.
+Exactly one environment may be registered once a Vite-hosted run starts. For automatic selection, no claimant falls back to transport-free Node, one claimant starts Vite, and several claimants fail with their names; `--node` bypasses discovery and `--vite` requires the registered environment regardless of `auto`. Vite-hosted runs require the module to be part of Flue's canonical `'use agent'` scan, so build, dev, and run cannot disagree about agent identity.
 
 ## `flueWorkerConfig()`
 
@@ -343,14 +348,13 @@ Preview is artifact-based: the config file is still discovered, loaded, and vali
 
 [`flue run`](/docs/cli/run/) has two execution modes. Both first discover `flue.config.*` from the **working directory** (which is also the project root) and drop unknown config keys before direct validation instead of rejecting them.
 
-Without `--vite`, execution is transport-free and Node-local:
+With no environment flag, the CLI evaluates `vite.config.*` without running hooks and inspects its environment declarations. Exactly one automatic environment selects Vite; no claimant selects transport-free Node; several are an error. `--node` skips this probe and forces transport-free execution. In transport-free mode:
 
-- `vite.config.ts` is never read.
 - `target` and `agents` are ignored; the agent module is the explicit `<path>` argument, not a scan result.
 - `db` is honored; without one, the run uses a SQLite database at `node_modules/.cache/flue/run.db` under the project root.
 - `app` and `cloudflare` are resolved but unused. Explicit-path existence checks still apply: a configured entry that does not exist fails the run.
 
-With `--vite`, the CLI also loads the project's Vite configuration and starts its single registered [`FlueRunEnvironment`](#fluerunenvironment). The Vite plugin performs its normal target selection, entry resolution, and canonical agent scan; the explicit module path must select an agent from that scan. Host configuration such as `app`, `providers`, platform bindings, and local persistence applies normally. The host environment injects only the ephemeral run route and owns its platform-specific behavior.
+A Vite-hosted run is selected automatically or required with `--vite` (including an environment with `auto: false`). The Vite plugin performs its normal target selection, entry resolution, and canonical agent scan; the explicit module path must select an agent from that scan. Host configuration such as `app`, `providers`, platform bindings, and local persistence applies normally. The host environment injects only the ephemeral run route and owns its platform-specific behavior.
 
 ## `@flue/runtime/config`
 

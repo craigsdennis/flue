@@ -15,3 +15,4 @@ export { createImportTrace, findCloudflareSpecifier } from './import-trace.ts';
 export { markdownImportPlugin } from './markdown-import-plugin.ts';
 export type { RunBridgeOptions } from './run-bridge-plugin.ts';
 export { runBridgePlugin } from './run-bridge-plugin.ts';
+export { detectAutoRunEnvironments } from './run-environment.ts';

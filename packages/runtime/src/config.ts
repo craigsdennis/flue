@@ -40,9 +40,9 @@ export interface FlueConfig {
 	 * - `'cloudflare'` builds a Workers-compatible application.
 	 *
 	 * Optional: the Vite plugin auto-detects `'cloudflare'` from the presence
-	 * of the `@cloudflare/vite-plugin` sibling when unset. `flue run` stays
-	 * transport-free and Node-local for every target unless the caller opts
-	 * into the target's registered Vite environment with `flue run --vite`.
+	 * of the `@cloudflare/vite-plugin` sibling when unset. `flue run` selects
+	 * execution from declared Vite run-environment capabilities rather than
+	 * branching on this target; `--vite` and `--node` override discovery.
 	 */
 	target?: 'node' | 'cloudflare';
 	/**

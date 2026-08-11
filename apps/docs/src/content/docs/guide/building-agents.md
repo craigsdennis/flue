@@ -127,7 +127,7 @@ flue run src/agents/triage-agent.ts --id issue-17307 --message "Look at issue 17
 flue run src/agents/triage-agent.ts --id issue-17307 --message "Any update?"
 ```
 
-Conversations persist between runs — in your project's configured database or a local cache file in the default transport-free mode, and in the host's local persistence when using `--vite`. See the [`flue run` reference](/docs/cli/run/) for execution modes, agent selection, structured output, and the full flag list.
+Conversations persist between runs — in your project's configured database or a local cache file in transport-free mode, and in the host's local persistence when Vite-hosted. See the [`flue run` reference](/docs/cli/run/) for execution modes, agent selection, structured output, and the full flag list.
 
 ### HTTP
 

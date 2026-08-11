@@ -25,7 +25,7 @@ npx flue run src/agents/assistant.ts -m "Say hello"
 ## Commands
 
 - [`flue init [directory]`](/docs/cli/init/) — scaffold a starter Flue project, prompting for the build target and server setup when flags are omitted.
-- [`flue run <path>`](/docs/cli/run/) — run one agent module locally: transport-free by default, or through the project's registered Vite host with `--vite`; submit one message, stream the turn, print the reply, exit.
+- [`flue run <path>`](/docs/cli/run/) — run one agent module locally: automatically through a declared Vite host when available, otherwise transport-free; submit one message, stream the turn, print the reply, exit.
 - [`flue add [kind] [name|url]`](/docs/cli/add/) — fetch a blueprint implementation guide for a coding agent to follow; with no arguments, list the available blueprints.
 - [`flue update <kind> <name|url>`](/docs/cli/update/) — fetch the same blueprint guide for updating an existing integration.
 - [`flue docs [read|search]`](/docs/cli/docs/) — list the bundled documentation pages, print one as markdown, or search them.

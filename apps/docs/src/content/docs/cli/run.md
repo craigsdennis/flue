@@ -7,14 +7,18 @@ lastReviewedAt: 2026-07-21
 ## Synopsis
 
 ```bash
-flue run <path> --message <text> [--name <agent>] [--id <id>] [--data <json>] [--uid <uid> | --new] [--vite] [--env <path>] [--json]
+flue run <path> --message <text> [--name <agent>] [--id <id>] [--data <json>] [--uid <uid> | --new] [--vite | --node] [--env <path>] [--json]
 ```
 
 ## Description
 
-`flue run` executes one agent module locally: it submits one message, streams the agent's activity to stderr, prints the final assistant reply to stdout, and exits. It is transport-free by default on every target: no server is created and only the agent module (and whatever it imports) is loaded, never `app.ts`. A module that imports platform APIs such as `cloudflare:*` fails in this mode.
+`flue run` executes one agent module locally: it submits one message, streams the agent's activity to stderr, prints the final assistant reply to stdout, and exits. With no environment flag, it evaluates `vite.config.*` only far enough to inspect declared [`FlueRunEnvironment`](/docs/reference/configuration/#fluerunenvironment) capabilities — no Vite hooks run and no app or server starts during this probe:
 
-Pass `--vite` to run through the single [`FlueRunEnvironment`](/docs/reference/configuration/#fluerunenvironment) registered by the project's Vite configuration. The host owns platform setup, route injection, persistence, and cleanup; the CLI owns agent selection, server startup, protocol driving, and terminal output. Cloudflare provides an environment out of the box, so `--vite` runs the selected agent through workerd with the generated Durable Object and project bindings, including the `cloudflare/...` Workers AI provider.
+- Exactly one environment requesting automatic selection runs through that Vite host.
+- No automatic environment uses transport-free Node execution: no server is created and only the agent module (and whatever it imports) is loaded, never `app.ts`.
+- Several automatic environments are ambiguous and fail with their names.
+
+`--vite` requires the project's single registered Vite environment; `--node` skips Vite discovery and forces transport-free execution. The flags cannot be combined. The host owns platform setup, route injection, persistence, and cleanup; the CLI owns agent selection, server startup, protocol driving, and terminal output. Cloudflare declares an automatic environment out of the box, so an ordinary `flue run` in a Cloudflare project runs through workerd with the generated Durable Object and project bindings, including the `cloudflare/...` Workers AI provider.
 
 Every Vite-hosted run uses a random temporary route and shuts the server down afterward. The agent module must have a top-level `'use agent'` directive and match the configured agent scan. Host integrations may deliberately bypass authored HTTP mounts and middleware, as Cloudflare does for its localhost-only route; each integration documents its own behavior.
 
@@ -32,7 +36,8 @@ Conversations persist between invocations, so `--id` continues a conversation an
 | `--uid <uid>`          | Continue only the conversation instance with this uid. Cannot be combined with `--new` or `--data`.                                                                                                                                     |
 | `--new`                | Create only: the run is rejected when the conversation id already exists.                                                                                                                                                               |
 | `--json`               | Print a JSON result envelope to stdout instead of the reply text.                                                                                                                                                                       |
-| `--vite`               | Run through the single [`FlueRunEnvironment`](/docs/reference/configuration/#fluerunenvironment) registered by the project's Vite configuration.                                                                                        |
+| `--vite`               | Require the single [`FlueRunEnvironment`](/docs/reference/configuration/#fluerunenvironment) registered by the project's Vite configuration, even when it has `auto: false`.                                                         |
+| `--node`               | Skip Vite-config discovery and force transport-free Node execution. Cannot be combined with `--vite`.                                                                                                                                |
 | `--env <path>`         | Load one alternate `.env`-format file before the run instead of the default `.env`.                                                                                                                                                     |
 
 ## Output
@@ -77,8 +82,11 @@ flue run src/agents/triage.ts -m "Triage this." --id "issue-$N" --data '{"issue"
 # Extract just the reply text from the envelope
 flue run src/agents/hello.ts -m "Run the demo." --json | jq -r .message
 
-# Run through a third-party Vite host integration
+# Require a Vite host that opted out of automatic selection
 flue run src/agents/hello.ts -m "Hi" --vite
+
+# Bypass an automatically selected host
+flue run src/agents/hello.ts -m "Hi" --node
 
 # Load staging credentials for one run
 flue run src/agents/hello.ts -m "Hi" --env .env.staging

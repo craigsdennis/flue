@@ -327,8 +327,8 @@ flue run src/agents/support.ts --message "Handle ticket 42." --id ticket-42
 - `--input` → `--data '<json>'` (creation data, validated by the `initialData` static).
 - Gone with the HTTP form: `--server`, `--header`, `--target`, `--root`, `--output`, `--config`, and workflow names. To call a deployed server, use the SDK's conversation client instead.
 - New: `--uid`/`--new` send conditions and `--json` (result envelope). Stdout is the reply only; logs go to stderr.
-- New: `--vite` starts the project's registered Vite host environment and drives the selected agent through the normal conversation protocol. Cloudflare uses this mode for workerd, Workers bindings, and Durable Object persistence.
-- Transport-free `flue run` never loads `app.ts`; `flue run --vite` does. Register providers in the agent module when both modes must work.
+- New: registered Vite host environments can request automatic selection; Cloudflare does, providing workerd, Workers bindings, and Durable Object persistence out of the box. `--vite` requires the host explicitly and `--node` forces transport-free execution.
+- Transport-free `flue run` never loads `app.ts`; a Vite-hosted run does. Register providers in the agent module when both modes must work.
 
 ## Migration checklist
 

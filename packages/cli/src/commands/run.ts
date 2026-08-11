@@ -38,7 +38,8 @@ export function registerRunCommand(cli: CAC): void {
 		.option('--uid <uid>', 'Continue only the conversation incarnation with this uid')
 		.option('--new', 'Create only: reject when the conversation id already exists')
 		.option('--json', 'Print a JSON result envelope to stdout instead of the message text')
-		.option('--vite', 'Run through the Vite host environment registered by the project')
+		.option('--vite', 'Require the Vite host environment registered by the project')
+		.option('--node', 'Force transport-free Node execution instead of automatic Vite selection')
 		.option('--env <path>', 'Load one alternate .env-format file before the run')
 		.example('  $ flue run src/agents/hello.ts -m "Hi there"')
 		.example('  $ flue run src/agents/hello.ts -m "And then?" --id support-4821 --env .env.staging')
@@ -56,6 +57,7 @@ interface RunArgs {
 	uid: string | null | undefined;
 	json: boolean;
 	vite: boolean;
+	node: boolean;
 	envFile: string | undefined;
 }
 
@@ -68,6 +70,11 @@ function validateRunOptions(modulePath: string, options: CliOptions): RunArgs {
 	}
 
 	const envFile = stringOption(options, 'env', '--env');
+	const vite = booleanOption(options, 'vite');
+	const node = booleanOption(options, 'node');
+	if (vite && node) {
+		throw new UsageError('`--vite` and `--node` select different run environments — pass one or neither.');
+	}
 
 	const initialData = jsonOption(options, 'data', '--data');
 	const uid = stringOption(options, 'uid', '--uid');
@@ -92,7 +99,8 @@ function validateRunOptions(modulePath: string, options: CliOptions): RunArgs {
 		// The send condition: --uid <value> = continue-only, --new = create-only.
 		uid: createOnly ? null : uid,
 		json: booleanOption(options, 'json'),
-		vite: booleanOption(options, 'vite'),
+		vite,
+		node,
 		envFile,
 	};
 }
@@ -131,6 +139,7 @@ async function runAction(modulePath: string, options: CliOptions): Promise<void>
 		uid: args.uid,
 		conversationId: args.id,
 		vite: args.vite,
+		node: args.node,
 		onEvent: (chunk) => presenter.present(chunk as ConversationStreamChunk),
 		onRuntimeOutput: (line) => {
 			if (line.trim()) stderrLine(pc.dim(line));

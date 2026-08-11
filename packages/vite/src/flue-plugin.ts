@@ -77,7 +77,11 @@ import { createNodeDevController } from './node-dev.ts';
 import { configureNodePreview } from './node-preview.ts';
 import { canonicalizePath, isWithinDirectory } from './paths.ts';
 import { generateProvidersModule } from './providers-module.ts';
-import type { FlueRunEnvironment, FlueRunEnvironmentOptions } from './run-environment.ts';
+import {
+	type FlueRunEnvironment,
+	type FlueRunEnvironmentOptions,
+	runEnvironmentPluginApi,
+} from './run-environment.ts';
 import { transformUseAgentModule } from './use-agent-transform.ts';
 import { createWatchQueue, type WatchQueue } from './watch-queue.ts';
 
@@ -226,6 +230,21 @@ export function flue(config: FlueConfig = {}): Plugin[] {
 		root: undefined,
 		external: false,
 		importers: undefined,
+	};
+	const cloudflareRunEnvironment: FlueRunEnvironment = {
+		name: 'cloudflare',
+		auto: ({ plugins }) => config.target !== 'node' && containsCloudflarePlugin(plugins),
+		configure({ agent, routePrefix }) {
+			state.cloudflareRun = { identity: agent.identity, routePrefix };
+		},
+	};
+	// Synchronous marker for the CLI's lightweight Vite-config probe. The
+	// environment itself is registered later only when Cloudflare is the
+	// resolved target, so forcing --vite on Node still gets a clear error.
+	const cloudflareRunEnvironmentMarker: Plugin = {
+		name: 'flue-cloudflare-run-environment',
+		apply: 'serve',
+		api: runEnvironmentPluginApi(cloudflareRunEnvironment),
 	};
 
 	// The link between this flue() instance and a flueWorkerConfig() created
@@ -512,12 +531,7 @@ export function flue(config: FlueConfig = {}): Plugin[] {
 				},
 			};
 			if (target === 'cloudflare') {
-				api.registerRunEnvironment({
-					name: 'cloudflare',
-					configure({ agent, routePrefix }) {
-						state.cloudflareRun = { identity: agent.identity, routePrefix };
-					},
-				});
+				api.registerRunEnvironment(cloudflareRunEnvironment);
 				if (!cloudflareDetected) {
 					throw stackless(
 						new Error(
@@ -771,6 +785,7 @@ export function flue(config: FlueConfig = {}): Plugin[] {
 
 	return [
 		corePlugin,
+		cloudflareRunEnvironmentMarker,
 		markdownImportPlugin(),
 		importTrace.plugin,
 		flueDependencyResolverPlugin(resolverState),
@@ -1068,11 +1083,11 @@ function isFlueConfigPath(filePath: string, state: FluePluginState): boolean {
 	);
 }
 
-function containsCloudflarePlugin(plugins: UserConfig['plugins']): boolean {
+function containsCloudflarePlugin(plugins: readonly PluginOption[] | undefined): boolean {
 	return flattenPluginOptions(plugins).some((plugin) => isCloudflarePluginName(plugin.name));
 }
 
-function flattenPluginOptions(plugins: PluginOption[] | undefined): Plugin[] {
+function flattenPluginOptions(plugins: readonly PluginOption[] | undefined): Plugin[] {
 	const found: Plugin[] = [];
 	const visit = (option: PluginOption): void => {
 		if (!option || typeof option !== 'object') return;
@@ -1085,7 +1100,9 @@ function flattenPluginOptions(plugins: PluginOption[] | undefined): Plugin[] {
 		if (typeof (option as PromiseLike<unknown>).then === 'function') return;
 		if (typeof (option as Plugin).name === 'string') found.push(option as Plugin);
 	};
-	if (plugins) visit(plugins);
+	if (plugins) {
+		for (const plugin of plugins) visit(plugin);
+	}
 	return found;
 }
 

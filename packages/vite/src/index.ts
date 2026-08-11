@@ -21,7 +21,11 @@ export type { FlueWorkerConfigCustomizer } from './cloudflare-worker-config.ts';
 export { flueWorkerConfig } from './cloudflare-worker-config.ts';
 export type { FlueResolvedProjectInfo, FlueVitePluginApi } from './flue-plugin.ts';
 export { flue } from './flue-plugin.ts';
-export type { FlueRunEnvironment, FlueRunEnvironmentOptions } from './run-environment.ts';
+export type {
+	FlueRunEnvironment,
+	FlueRunEnvironmentDetectionContext,
+	FlueRunEnvironmentOptions,
+} from './run-environment.ts';
 export { flueRunEnvironment } from './run-environment.ts';
 export type {
 	FlueNodeActivityLease,

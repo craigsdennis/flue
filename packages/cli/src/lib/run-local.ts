@@ -6,8 +6,8 @@
  * single-runtime graph. A Vite-hosted run instead starts the user's Vite
  * environment on an OS-assigned localhost port, adds an ephemeral private
  * route for the selected agent, and drives the normal conversation protocol.
- * Every Vite host opts in with --vite through the public
- * flueRunEnvironment() integration point.
+ * Vite hosts advertise this capability through flueRunEnvironment(); one
+ * automatic claimant is selected by default, with --vite/--node overrides.
  */
 
 import { randomUUID } from 'node:crypto';
@@ -25,6 +25,7 @@ import {
 import { createFlueClient, FlueExecutionError } from '@flue/sdk';
 import {
 	createImportTrace,
+	detectAutoRunEnvironments,
 	findCloudflareSpecifier,
 	flueDependencyResolverPlugin,
 	type ImportTrace,
@@ -63,8 +64,10 @@ export interface LocalAgentRunOptions {
 	uid?: string | null;
 	/** Caller-chosen conversation id; a fresh ulid is minted when absent. */
 	conversationId?: string;
-	/** Force the project-registered Vite run environment (--vite). */
+	/** Require the project-registered Vite run environment (--vite). */
 	vite?: boolean;
+	/** Force transport-free execution and skip Vite discovery (--node). */
+	node?: boolean;
 	cwd?: string;
 	onEvent?: (chunk: unknown) => void;
 	/** Captured runtime/module console output (routed to stderr by the caller). */
@@ -157,7 +160,14 @@ export function createLocalAgentRun(options: LocalAgentRunOptions): LocalAgentRu
 		const conversationId = options.conversationId ?? ulid();
 
 		const { configPath, project } = await resolveRunProject(cwd);
-		if (options.vite === true) {
+		const restoreDiscoveryConsole = redirectStdoutConsole(options.onRuntimeOutput);
+		let useVite: boolean;
+		try {
+			useVite = await shouldUseViteRun(cwd, options);
+		} finally {
+			restoreDiscoveryConsole();
+		}
+		if (useVite) {
 			const restoreConsole = redirectStdoutConsole(options.onRuntimeOutput);
 			try {
 				return await startViteRun({
@@ -399,6 +409,39 @@ async function resolveRunProject(cwd: string): Promise<{
 		...(configPath !== undefined ? { configPath } : {}),
 	});
 	return { configPath, project };
+}
+
+/**
+ * Choose execution by declared capability, never by platform name. A forced
+ * Node run does not evaluate vite.config at all; a forced Vite run lets the
+ * bridge produce the normal missing/ambiguous-environment diagnostics.
+ * Automatic discovery evaluates only the Vite config module and synchronous
+ * plugin factories — no hooks run, no app loads, and no server starts.
+ */
+async function shouldUseViteRun(
+	root: string,
+	options: Pick<LocalAgentRunOptions, 'vite' | 'node'>,
+): Promise<boolean> {
+	if (options.node === true) return false;
+	if (options.vite === true) return true;
+
+	const { loadConfigFromFile } = await import('vite');
+	const loaded = await loadConfigFromFile(
+		{ command: 'serve', mode: 'development', isSsrBuild: false, isPreview: false },
+		undefined,
+		root,
+		'silent',
+	);
+	if (!loaded) return false;
+	const environments = await detectAutoRunEnvironments(loaded.config.plugins ?? []);
+	if (environments.length === 0) return false;
+	if (environments.length > 1) {
+		throw new Error(
+			`[flue] Multiple Vite run environments requested automatic selection (${environments.map((environment) => environment.name).join(', ')}). ` +
+				'Set auto: false on all but one environment, or pass --node.',
+		);
+	}
+	return true;
 }
 
 // ─── Module loading (non-listening Vite server) ─────────────────────────────

@@ -7,7 +7,7 @@
  * protocol at that prefix. The CLI owns server startup, protocol driving, and
  * teardown.
  */
-import type { Plugin } from 'vite';
+import type { Plugin, PluginOption } from 'vite';
 import type { AgentScanResult } from './agent-scan.ts';
 
 export interface FlueRunEnvironmentOptions {
@@ -17,9 +17,22 @@ export interface FlueRunEnvironmentOptions {
 	readonly routePrefix: string;
 }
 
+export interface FlueRunEnvironmentDetectionContext {
+	/** The flattened plugin set from the evaluated Vite config. */
+	readonly plugins: readonly Plugin[];
+}
+
 export interface FlueRunEnvironment {
 	/** Short diagnostic name, e.g. `cloudflare` or `my-framework`. */
 	readonly name: string;
+	/**
+	 * Whether an unflagged `flue run` should select this environment. Defaults
+	 * to true. A predicate lets a bundled integration claim the run only when
+	 * its owning sibling plugin is present.
+	 */
+	readonly auto?:
+		| boolean
+		| ((context: FlueRunEnvironmentDetectionContext) => boolean | Promise<boolean>);
 	/**
 	 * Prepare the host's dev entry to serve the selected agent at routePrefix.
 	 * Called after normal Vite config resolution and before the server listens.
@@ -50,6 +63,7 @@ export function flueRunEnvironment(environment: FlueRunEnvironment): Plugin {
 	return {
 		name: `flue-run-environment:${environment.name}`,
 		apply: 'serve',
+		api: runEnvironmentPluginApi(environment),
 		configResolved(config) {
 			const core = config.plugins.find((plugin) => plugin.name === 'flue');
 			const api = core?.api as FlueRunEnvironmentRegistrar | undefined;
@@ -62,4 +76,53 @@ export function flueRunEnvironment(environment: FlueRunEnvironment): Plugin {
 			api.registerRunEnvironment(environment);
 		},
 	};
+}
+
+interface FlueRunEnvironmentPluginApi {
+	readonly flueRunEnvironment: {
+		readonly version: 1;
+		readonly environment: FlueRunEnvironment;
+	};
+}
+
+/** Marker attached synchronously so the CLI can inspect a loaded Vite config without running hooks. */
+export function runEnvironmentPluginApi(
+	environment: FlueRunEnvironment,
+): FlueRunEnvironmentPluginApi {
+	return { flueRunEnvironment: { version: 1, environment } };
+}
+
+/** Find environments declared by an evaluated Vite config's plugin options. */
+export async function detectAutoRunEnvironments(
+	pluginOptions: readonly PluginOption[],
+): Promise<FlueRunEnvironment[]> {
+	const plugins = await flattenPluginOptions(pluginOptions);
+	const detected: FlueRunEnvironment[] = [];
+	for (const plugin of plugins) {
+		const marker = (plugin.api as Partial<FlueRunEnvironmentPluginApi> | undefined)
+			?.flueRunEnvironment;
+		if (marker?.version !== 1 || !marker.environment) continue;
+		const { environment } = marker;
+		const automatic =
+			typeof environment.auto === 'function'
+				? await environment.auto({ plugins })
+				: environment.auto !== false;
+		if (automatic) detected.push(environment);
+	}
+	return detected;
+}
+
+async function flattenPluginOptions(options: readonly PluginOption[]): Promise<Plugin[]> {
+	const plugins: Plugin[] = [];
+	const visit = async (option: PluginOption): Promise<void> => {
+		const resolved = await option;
+		if (!resolved) return;
+		if (Array.isArray(resolved)) {
+			for (const nested of resolved) await visit(nested);
+			return;
+		}
+		plugins.push(resolved);
+	};
+	for (const option of options) await visit(option);
+	return plugins;
 }
